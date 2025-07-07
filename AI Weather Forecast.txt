@@ -1,0 +1,1068 @@
+import React, { useState, useEffect, useRef } from 'react';
+import ReactDOM from 'react-dom/client';
+import { GoogleGenAI, Chat } from '@google/genai';
+import './index.css';
+
+// 聊天訊息的型別定義
+interface ChatMessage {
+  role: 'user' | 'model';
+  text: string;
+}
+
+// 天氣警報的型別定義
+interface WeatherAlert {
+  headline: string;
+  description: string;
+}
+
+// 天氣資料的型別定義
+interface WeatherData {
+  city: string;
+  current: {
+    temp_c: number;
+    condition: string;
+    humidity: number;
+    wind_kph: number;
+    feelslike_c: number;
+    uv: number;
+    wind_dir: string;
+  };
+  forecast: {
+    date: string;
+    day: {
+      maxtemp_c: number;
+      mintemp_c: number;
+      condition: string;
+      daily_chance_of_rain: number;
+      daily_rainfall_mm: number;
+      rain_ph: number;
+      daily_uv_index: number;
+    };
+  }[];
+  alerts: WeatherAlert[];
+}
+
+// 詳細資料的型別定義
+interface DetailedData {
+  city: string;
+  dailyData: {
+    date: string;
+    rainfall_mm: number;
+    rain_ph: number | null;
+    uv_index: number;
+  }[];
+}
+
+// 空氣品質資料的型別定義
+interface AirQualityData {
+  city: string;
+  aqi: number;
+  level: string;
+  pollutants: {
+    pm25: number;
+    pm10: number;
+    o3: number;
+    no2: number;
+    so2: number;
+    co: number;
+  };
+  health_recommendation: string;
+}
+
+// 颱風資訊的型別定義
+interface TyphoonInfo {
+  name: string;
+  englishName: string;
+  isActive: boolean;
+  location: string;
+  maxWindSpeed_kph: number;
+  stormRadius_km: number;
+  movement: string;
+  summary: string;
+}
+
+interface GroundingChunk {
+  web?: {
+    uri?: string;
+    title?: string;
+  };
+}
+
+
+const navItems = ['天氣', '空氣品質', '生活', '地震', '颱風動態', '海象', '氣候', '資料', '知識與天文'];
+
+const lifeCategories = [
+  { name: '休閒旅遊', icon: '🏞️' }, { name: '單車', icon: '🚲' },
+  { name: '溪流', icon: '💧' }, { name: '登山', icon: '⛰️' },
+  { name: '觀星', icon: '🔭' }, { name: '機場', icon: '✈️' },
+  { name: '棒球場', icon: '⚾' }, { name: '國家公園', icon: '🏞️' },
+  { name: '國家風景區', icon: '🖼️' }, { name: '國家森林遊樂區', icon: '🌲' },
+  { name: '農場旅遊', icon: '🧑‍🌾' }, { name: '主要水庫', icon: '💧' },
+  { name: '親海旅遊', icon: '🏖️' }, { name: '海水浴場', icon: '🌊' },
+  { name: '主要港口', icon: '⚓' }, { name: '休閒漁港', icon: '🎣' },
+  { name: '海釣', icon: '🐠' }, { name: '衝浪', icon: '🏄' },
+  { name: '浮潛', icon: '🤿' }, { name: '客庄氣象', icon: '🏘️' },
+  { name: '原鄉部落', icon: '🛖' }, { name: '南區氣象服務', icon: '🧭' },
+  { name: '農業', icon: '🌾' }, { name: '漁業', icon: '🐟' },
+  { name: '打卡報天氣', icon: '📸' }, { name: '氣象隨選平台', icon: '🌐' },
+  { name: '健康氣象', icon: '❤️' }
+];
+
+const earthquakeCategories = [
+  { name: '近地震', icon: '🌍' },
+  { name: '全球地震', icon: '🌐' },
+  { name: '地震活動彙整', icon: '📊' },
+  { name: '地震百問', icon: '❓' },
+  { name: '地震防護', icon: '🛡️' },
+  { name: '地震觀測網', icon: '📡' },
+  { name: '災害地震', icon: '🏚️' },
+  { name: '地震話題', icon: '🗣️' }
+];
+
+const App: React.FC = () => {
+  const [city, setCity] = useState<string>('台北');
+  const [weatherData, setWeatherData] = useState<WeatherData | null>(null);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<string>('天氣');
+
+  const [astroFact, setAstroFact] = useState<string>('');
+  const [astroLoading, setAstroLoading] = useState<boolean>(false);
+  const [astroError, setAstroError] = useState<string | null>(null);
+
+  const [detailedData, setDetailedData] = useState<DetailedData | null>(null);
+  const [dataLoading, setDataLoading] = useState<boolean>(false);
+  const [dataError, setDataError] = useState<string | null>(null);
+  
+  const [airQualityData, setAirQualityData] = useState<AirQualityData | null>(null);
+  const [airQualityLoading, setAirQualityLoading] = useState<boolean>(false);
+  const [airQualityError, setAirQualityError] = useState<string | null>(null);
+
+  const [isLifeModalOpen, setIsLifeModalOpen] = useState<boolean>(false);
+  const [selectedLifeCategory, setSelectedLifeCategory] = useState<string>('');
+  const [lifeData, setLifeData] = useState<string>('');
+  const [lifeLoading, setLifeLoading] = useState<boolean>(false);
+  const [lifeError, setLifeError] = useState<string | null>(null);
+
+  const [isEarthquakeModalOpen, setIsEarthquakeModalOpen] = useState<boolean>(false);
+  const [selectedEarthquakeCategory, setSelectedEarthquakeCategory] = useState<string>('');
+  const [earthquakeData, setEarthquakeData] = useState<string>('');
+  const [earthquakeLoading, setEarthquakeLoading] = useState<boolean>(false);
+  const [earthquakeError, setEarthquakeError] = useState<string | null>(null);
+
+  const [typhoonData, setTyphoonData] = useState<TyphoonInfo[] | null>(null);
+  const [typhoonLoading, setTyphoonLoading] = useState<boolean>(false);
+  const [typhoonError, setTyphoonError] = useState<string | null>(null);
+  const [typhoonSources, setTyphoonSources] = useState<GroundingChunk[]>([]);
+
+  // AI Chat State
+  const [isChatOpen, setIsChatOpen] = useState<boolean>(false);
+  const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState<string>('');
+  const [isChatLoading, setIsChatLoading] = useState<boolean>(false);
+  const [chatSession, setChatSession] = useState<Chat | null>(null);
+  const chatMessagesRef = useRef<HTMLDivElement>(null);
+
+
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
+
+  useEffect(() => {
+    // Initialize Chat Session
+    const initChat = () => {
+      const session = ai.chats.create({
+        model: 'gemini-2.5-flash-preview-04-17',
+        config: {
+          systemInstruction: '你是一個全能的氣象與生活助理。請優先使用台灣中央氣象署的公開資料來回答問題。所有回答都必須使用繁體中文。',
+        },
+      });
+      setChatSession(session);
+      setChatHistory([
+        { role: 'model', text: '您好！我是您的 AI 小幫手，有什麼氣象或生活相關的問題都可以問我喔！' }
+      ]);
+    };
+    initChat();
+  }, []);
+
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatInput.trim() || !chatSession || isChatLoading) return;
+  
+    const userMessage: ChatMessage = { role: 'user', text: chatInput };
+    setChatHistory(prev => [...prev, userMessage]);
+    setChatInput('');
+    setIsChatLoading(true);
+  
+    try {
+      const response = await chatSession.sendMessage({ message: userMessage.text });
+      const modelMessage: ChatMessage = { role: 'model', text: response.text };
+      setChatHistory(prev => [...prev, modelMessage]);
+    } catch (e) {
+      console.error('Chat API 錯誤:', e);
+      const errorMessage: ChatMessage = { role: 'model', text: '抱歉，我現在無法回答問題，請稍後再試。' };
+      setChatHistory(prev => [...prev, errorMessage]);
+    } finally {
+      setIsChatLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (chatMessagesRef.current) {
+      chatMessagesRef.current.scrollTop = chatMessagesRef.current.scrollHeight;
+    }
+  }, [chatHistory, isChatLoading]);
+
+  const getWeatherData = async () => {
+    if (!city) {
+      setError('請輸入城市名稱。');
+      return;
+    }
+    setLoading(true);
+    setError(null);
+    setWeatherData(null);
+
+    const prompt = `
+      根據台灣中央氣象署的公開資料，提供 ${city} 的詳細即時天氣、5 天天氣預報，以及任何有效的天氣警報。
+      請務必使用繁體中文。
+      請務必提供每日雨量(毫米)、雨水pH值、每日紫外線指數。如果資料無法取得，請使用 0 或一個合理的預設值。
+      僅以 JSON 物件回應。該 JSON 物件應具有以下確切結構，如果沒有警報，請回傳一個空的 "alerts" 陣列：
+      {
+        "city": "城市名稱",
+        "current": {
+          "temp_c": number,
+          "condition": "天氣狀況",
+          "humidity": number,
+          "wind_kph": number,
+          "feelslike_c": number,
+          "uv": number,
+          "wind_dir": "風向 (例如：東北風)"
+        },
+        "forecast": [
+          {
+            "date": "YYYY-MM-DD",
+            "day": {
+              "maxtemp_c": number,
+              "mintemp_c": number,
+              "condition": "天氣狀況",
+              "daily_chance_of_rain": number,
+              "daily_rainfall_mm": number,
+              "rain_ph": number,
+              "daily_uv_index": number
+            }
+          }
+        ],
+        "alerts": [
+          {
+            "headline": "警報標題",
+            "description": "警報詳細說明"
+          }
+        ]
+      }
+    `;
+
+    try {
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-preview-04-17',
+        contents: prompt,
+        config: {
+          responseMimeType: 'application/json',
+        },
+      });
+
+      let jsonStr = response.text.trim();
+      const fenceRegex = /^```(\w*)?\s*\n?(.*?)\n?\s*```$/s;
+      const match = jsonStr.match(fenceRegex);
+      if (match && match[2]) {
+        jsonStr = match[2].trim();
+      }
+      
+      const data: WeatherData = JSON.parse(jsonStr);
+      setWeatherData(data);
+
+    } catch (e) {
+      console.error('API 錯誤:', e);
+      setError('無法取得天氣資料。請檢查城市名稱後再試一次。');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const getAirQualityData = async () => {
+    if (!city) {
+      setAirQualityError('請輸入城市名稱。');
+      return;
+    }
+    setAirQualityLoading(true);
+    setAirQualityError(null);
+    setAirQualityData(null);
+
+    const prompt = `
+      根據台灣「行政院環保署空氣品質監測網」的公開資料，提供 ${city} 的即時空氣品質資訊。
+      請務必使用繁體中文。
+      請包含 AQI 指數、等級（例如：良好, 普通, 對敏感族群不健康, 對所有族群不健康, 非常不健康, 危害）、主要污染物濃度（PM2.5, PM10, O3, NO2, SO2, CO），以及基於 AQI 等級的健康建議。
+      僅以 JSON 物件回應。該 JSON 物件應具有以下確切結構：
+      {
+        "city": "城市名稱",
+        "aqi": number,
+        "level": "等級",
+        "pollutants": {
+          "pm25": number,
+          "pm10": number,
+          "o3": number,
+          "no2": number,
+          "so2": number,
+          "co": number
+        },
+        "health_recommendation": "健康建議文字"
+      }
+    `;
+
+    try {
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-preview-04-17',
+        contents: prompt,
+        config: {
+          responseMimeType: 'application/json',
+        },
+      });
+      let jsonStr = response.text.trim();
+      const fenceRegex = /^```(\w*)?\s*\n?(.*?)\n?\s*```$/s;
+      const match = jsonStr.match(fenceRegex);
+      if (match && match[2]) {
+        jsonStr = match[2].trim();
+      }
+      const data: AirQualityData = JSON.parse(jsonStr);
+      setAirQualityData(data);
+    } catch (e) {
+      console.error('API 錯誤 (空氣品質):', e);
+      setAirQualityError('無法取得空氣品質資料。請檢查城市名稱後再試一次。');
+    } finally {
+      setAirQualityLoading(false);
+    }
+  };
+
+
+  const getDetailedData = async () => {
+    if (!city) {
+      setDataError('請輸入城市名稱。');
+      return;
+    }
+    setDataLoading(true);
+    setDataError(null);
+    setDetailedData(null);
+
+    const prompt = `
+      根據台灣中央氣象署的公開資料，提供 ${city} 最近7天的每日雨量(毫米)、雨水pH值、每日紫外線指數。
+      請務必使用繁體中文。
+      如果某項資料無法取得（例如沒有下雨就沒有pH值），請為 rain_ph 使用 null。
+      僅以 JSON 物件回應。該 JSON 物件應具有以下確切結構：
+      {
+        "city": "城市名稱",
+        "dailyData": [
+          {
+            "date": "YYYY-MM-DD",
+            "rainfall_mm": number,
+            "rain_ph": number | null,
+            "uv_index": number
+          }
+        ]
+      }
+    `;
+
+    try {
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-preview-04-17',
+        contents: prompt,
+        config: {
+          responseMimeType: 'application/json',
+        },
+      });
+      let jsonStr = response.text.trim();
+      const fenceRegex = /^```(\w*)?\s*\n?(.*?)\n?\s*```$/s;
+      const match = jsonStr.match(fenceRegex);
+      if (match && match[2]) {
+        jsonStr = match[2].trim();
+      }
+      const data: DetailedData = JSON.parse(jsonStr);
+      setDetailedData(data);
+    } catch (e) {
+      console.error('API 錯誤 (詳細資料):', e);
+      setDataError('無法取得詳細資料。請檢查城市名稱後再試一次。');
+    } finally {
+      setDataLoading(false);
+    }
+  };
+
+  const getAstroFact = async () => {
+    setAstroLoading(true);
+    setAstroError(null);
+    const prompt = '請根據台灣中央氣象署的公開資料或網站內容，用繁體中文提供一則關於天文學或大氣科學的有趣小知識。內容需簡潔、易於理解，大約 100 字。';
+    try {
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash-preview-04-17',
+            contents: prompt,
+        });
+        setAstroFact(response.text);
+    } catch (e) {
+        console.error('Astro API 錯誤:', e);
+        setAstroError('無法取得天文知識，請稍後再試。');
+    } finally {
+        setAstroLoading(false);
+    }
+  };
+
+  const getLifeData = async (category: string) => {
+    if (!city) {
+      setLifeError('請先在任一分頁輸入城市名稱。');
+      setLifeData('');
+      setLifeLoading(false);
+      return;
+    }
+    setLifeLoading(true);
+    setLifeError(null);
+    setLifeData('');
+
+    const prompt = `
+      你是一個生活氣象小幫手。根據台灣中央氣象署的公開資料，為「${city}」提供關於「${category}」主題的生活氣象建議和相關資訊。
+      例如，如果是登山，請提供天氣、步道建議、注意事項。如果是觀星，請提供天氣、光害、能見度等建議。
+      請用繁體中文回答，內容要實用、條理分明，並且格式化成易於閱讀的段落。
+    `;
+    try {
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-preview-04-17',
+        contents: prompt,
+      });
+      setLifeData(response.text);
+    } catch (e) {
+      console.error('API 錯誤 (生活資訊):', e);
+      setLifeError(`無法取得「${category}」的資料，請稍後再試。`);
+    } finally {
+      setLifeLoading(false);
+    }
+  };
+
+  const getEarthquakeData = async (category: string) => {
+    setEarthquakeLoading(true);
+    setEarthquakeError(null);
+    setEarthquakeData('');
+
+    const locationContext = (category === '近地震' || category === '災害地震') && city ? `，特別是與 ${city} 相關的資訊` : '';
+
+    const prompt = `
+      你是一個地震資訊專家。根據台灣中央氣象署的公開資料，提供關於「${category}」主題的詳細資訊${locationContext}。
+      - 如果是「近地震」，提供最近在台灣附近發生的地震列表。
+      - 如果是「全球地震」，提供最近全球範圍內的顯著地震。
+      - 如果是「地震活動彙整」，提供近期地震活動的統計與分析。
+      - 如果是「地震百問」，選擇一個常見問題並提供詳細解答。
+      - 如果是「地震防護」，提供實用的地震防災準備與應變措施。
+      - 如果是「地震觀測網」，介紹其功能與重要性。
+      - 如果是「災害地震」，回顧一次台灣歷史上的災害性地震事件。
+      - 如果是「地震話題」，討論一個近期有關地震的熱門話題。
+      請用繁體中文回答，內容要專業、條理分明，並且格式化成易於閱讀的段落或列表。
+    `;
+    try {
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-preview-04-17',
+        contents: prompt,
+      });
+      setEarthquakeData(response.text);
+    } catch (e) {
+      console.error('API 錯誤 (地震資訊):', e);
+      setEarthquakeError(`無法取得「${category}」的資料，請稍後再試。`);
+    } finally {
+      setEarthquakeLoading(false);
+    }
+  };
+
+  const getTyphoonData = async () => {
+    setTyphoonLoading(true);
+    setTyphoonError(null);
+    setTyphoonData(null);
+    setTyphoonSources([]);
+
+    const prompt = `
+      使用 Google Search 的最新資訊，並參考台灣中央氣象署的公開資料，提供當前所有正在影響或未來48小時內可能影響台灣的活躍颱風的最新動態。
+      如果目前沒有活躍或潛在威脅的颱風，請回傳一個空的 JSON 陣列。
+      請為每個颱風提供以下資訊：颱風名稱（中文）、英文名稱、是否活躍 (固定為 true)、中心位置描述、中心最大風速（公里/小時）、七級風暴風半徑（公里）、移動方向與速度（例如：每小時20公里，向西移動）、以及對台灣的綜合影響評估摘要。
+      僅以 JSON 物件回應，不要包含任何 markdown 格式。該 JSON 物件應具有以下確切結構：
+      [
+        {
+          "name": "string",
+          "englishName": "string",
+          "isActive": true,
+          "location": "string",
+          "maxWindSpeed_kph": number,
+          "stormRadius_km": number,
+          "movement": "string",
+          "summary": "string"
+        }
+      ]
+    `;
+
+    try {
+      const response = await ai.models.generateContent({
+        model: 'gemini-2.5-flash-preview-04-17',
+        contents: prompt,
+        config: {
+          tools: [{ googleSearch: {} }],
+        },
+      });
+      let jsonStr = response.text.trim();
+      const fenceRegex = /^```(\w*)?\s*\n?(.*?)\n?\s*```$/s;
+      const match = jsonStr.match(fenceRegex);
+      if (match && match[2]) {
+        jsonStr = match[2].trim();
+      }
+      const data: TyphoonInfo[] = JSON.parse(jsonStr);
+      setTyphoonData(data);
+      
+      const sources = response.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [];
+      setTyphoonSources(sources.filter(chunk => chunk.web && chunk.web.uri));
+
+    } catch (e) {
+      console.error('API 錯誤 (颱風動態):', e);
+      setTyphoonError('無法取得颱風動態資料，請稍後再試。這可能是暫時性問題或目前沒有可用的公開資訊。');
+    } finally {
+      setTyphoonLoading(false);
+    }
+  };
+
+  const handleLifeCategoryClick = (category: string) => {
+    setSelectedLifeCategory(category);
+    setIsLifeModalOpen(true);
+    getLifeData(category);
+  };
+
+  const handleEarthquakeCategoryClick = (category: string) => {
+    setSelectedEarthquakeCategory(category);
+    setIsEarthquakeModalOpen(true);
+    getEarthquakeData(category);
+  };
+
+  useEffect(() => {
+    if (activeTab === '天氣' && !weatherData && !loading && !error) {
+        getWeatherData();
+    }
+     if (activeTab === '空氣品質' && !airQualityData && !airQualityLoading && !airQualityError) {
+        getAirQualityData();
+    }
+    if (activeTab === '知識與天文' && !astroFact && !astroLoading && !astroError) {
+        getAstroFact();
+    }
+    if (activeTab === '颱風動態' && !typhoonData && !typhoonLoading && !typhoonError) {
+        getTyphoonData();
+    }
+  }, [activeTab]);
+
+
+  const getWeatherIcon = (condition: string): string => {
+    const lowerCaseCondition = condition.toLowerCase();
+    if (lowerCaseCondition.includes('雷')) return '⛈️';
+    if (lowerCaseCondition.includes('雨') || lowerCaseCondition.includes('毛毛雨')) return '🌧️';
+    if (lowerCaseCondition.includes('雪') || lowerCaseCondition.includes('雨夾雪') || lowerCaseCondition.includes('暴風雪')) return '❄️';
+    if (lowerCaseCondition.includes('晴')) return '☀️';
+    if (lowerCaseCondition.includes('雲') || lowerCaseCondition.includes('陰')) return '☁️';
+    if (lowerCaseCondition.includes('霧')) return '🌫️';
+    return '⛅'; // 預設
+  };
+
+  const getDayOfWeek = (dateString: string) => {
+    const date = new Date(dateString);
+    date.setUTCHours(12); // 調整以避免時區問題
+    return date.toLocaleDateString('zh-TW', { weekday: 'short' });
+  };
+  
+  const getWindDirectionRotation = (windDir: string): number => {
+    if (!windDir) return 0;
+    if (windDir.includes('東北')) return 45;
+    if (windDir.includes('東南')) return 135;
+    if (windDir.includes('西南')) return 225;
+    if (windDir.includes('西北')) return 315;
+    if (windDir.includes('北')) return 0;
+    if (windDir.includes('東')) return 90;
+    if (windDir.includes('南')) return 180;
+    if (windDir.includes('西')) return 270;
+    return 0; // 預設為靜止或無風向
+  };
+
+  const getAqiClass = (aqi: number): string => {
+    if (aqi <= 50) return 'aqi-good';
+    if (aqi <= 100) return 'aqi-moderate';
+    if (aqi <= 150) return 'aqi-unhealthy-sensitive';
+    if (aqi <= 200) return 'aqi-unhealthy';
+    if (aqi <= 300) return 'aqi-very-unhealthy';
+    return 'aqi-hazardous';
+  };
+
+
+  const renderContent = () => {
+    switch (activeTab) {
+      case '天氣':
+        return (
+          <>
+            <div className="search-box">
+              <input
+                type="text"
+                value={city}
+                onChange={(e) => setCity(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && getWeatherData()}
+                placeholder="例如：台北"
+                aria-label="城市名稱"
+              />
+              <button onClick={getWeatherData} disabled={loading}>
+                {loading ? '搜尋中...' : '取得天氣'}
+              </button>
+            </div>
+
+            {error && <div className="error-message weather-error" role="alert">{error}</div>}
+            {loading && <div className="loading-spinner" aria-label="正在載入天氣資料"></div>}
+
+            {weatherData && (
+              <div className="weather-container">
+                {weatherData.alerts && weatherData.alerts.length > 0 && (
+                    <div className="weather-alerts" role="alert">
+                        {weatherData.alerts.map((alert, index) => (
+                            <div key={index} className="alert-item">
+                                <h4><span className="alert-icon">⚠️</span> {alert.headline}</h4>
+                                <p>{alert.description}</p>
+                            </div>
+                        ))}
+                    </div>
+                )}
+                <div className="weather-results" role="region" aria-live="polite">
+                    <div className="current-weather">
+                        <h2>{weatherData.city}</h2>
+                        <div className="current-weather-details">
+                            <div className="current-temp">
+                                <span className="weather-icon">{getWeatherIcon(weatherData.current.condition)}</span>
+                                {Math.round(weatherData.current.temp_c)}°C
+                            </div>
+                            <div className="current-condition">{weatherData.current.condition}</div>
+                        </div>
+
+                        {weatherData.current.wind_dir && (
+                          <div className="wind-display">
+                            <div className="wind-compass">
+                              <span className="north">N</span>
+                              <span className="east">E</span>
+                              <span className="south">S</span>
+                              <span className="west">W</span>
+                              <div
+                                className="wind-arrow"
+                                style={{ transform: `rotate(${getWindDirectionRotation(weatherData.current.wind_dir)}deg)` }}
+                                title={`風向: ${weatherData.current.wind_dir}`}
+                              >
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                                  <path d="M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71z"></path>
+                                </svg>
+                              </div>
+                            </div>
+                            <div className="wind-info">
+                              <div className="wind-label">風力</div>
+                              <div className="wind-speed">{weatherData.current.wind_kph}<span> kph</span></div>
+                              <div className="wind-direction">{weatherData.current.wind_dir}</div>
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="current-extras">
+                            <div className="extra-item"><span>體感</span><strong>{Math.round(weatherData.current.feelslike_c)}°</strong></div>
+                            <div className="extra-item"><span>濕度</span><strong>{weatherData.current.humidity}%</strong></div>
+                            <div className="extra-item"><span>紫外線</span><strong>{weatherData.current.uv}</strong></div>
+                        </div>
+                    </div>
+                    <div className="forecast">
+                      <h3>5 天天氣預報</h3>
+                      <div className="forecast-grid">
+                          {weatherData.forecast.slice(0, 5).map((day) => (
+                          <div className="forecast-day" key={day.date}>
+                              <h4>{getDayOfWeek(day.date)}</h4>
+                              <span className="weather-icon">{getWeatherIcon(day.day.condition)}</span>
+                              <div className="forecast-temps">
+                                <strong>{Math.round(day.day.maxtemp_c)}°</strong>
+                                <span>{Math.round(day.day.mintemp_c)}°</span>
+                              </div>
+                              <div className="precip"><span className="precip-icon">💧</span>{day.day.daily_chance_of_rain}%</div>
+                              <div className="forecast-details">
+                                <div className="forecast-detail-item" title="每日雨量"><span className="detail-icon">🌧️</span><span className="detail-value">{day.day.daily_rainfall_mm} mm</span></div>
+                                <div className="forecast-detail-item" title="每日紫外線"><span className="detail-icon">☀️</span><span className="detail-value">指數 {day.day.daily_uv_index}</span></div>
+                                <div className="forecast-detail-item" title="雨水pH值"><span className="detail-icon">🧪</span><span className="detail-value">pH {day.day.rain_ph}</span></div>
+                              </div>
+                          </div>
+                          ))}
+                      </div>
+                    </div>
+                    <div className="data-source">資料來源：交通部中央氣象署 (透過 Gemini API 彙整)</div>
+                </div>
+              </div>
+            )}
+          </>
+        );
+
+      case '空氣品質':
+        return (
+            <div className="air-quality-content">
+                <h3>即時空氣品質</h3>
+                <div className="search-box">
+                    <input
+                        type="text"
+                        value={city}
+                        onChange={(e) => setCity(e.target.value)}
+                        onKeyPress={(e) => e.key === 'Enter' && getAirQualityData()}
+                        placeholder="例如：台北"
+                        aria-label="城市名稱"
+                    />
+                    <button onClick={getAirQualityData} disabled={airQualityLoading}>
+                        {airQualityLoading ? '查詢中...' : '查詢空品'}
+                    </button>
+                </div>
+
+                {airQualityError && <div className="error-message" role="alert">{airQualityError}</div>}
+                {airQualityLoading && <div className="loading-spinner" aria-label="正在載入空氣品質資料"></div>}
+
+                {airQualityData && (
+                    <div className="aq-results">
+                        <h4>{airQualityData.city}</h4>
+                        <div className="aqi-display-wrapper">
+                            <div className={`aqi-display ${getAqiClass(airQualityData.aqi)}`}>
+                                <div className="aqi-value">{airQualityData.aqi}</div>
+                                <div className="aqi-label">AQI</div>
+                            </div>
+                            <div className="aqi-level">{airQualityData.level}</div>
+                        </div>
+
+                        <div className="pollutants-grid">
+                            <div className="pollutant-item"><span>PM2.5</span><strong>{airQualityData.pollutants.pm25}</strong></div>
+                            <div className="pollutant-item"><span>PM10</span><strong>{airQualityData.pollutants.pm10}</strong></div>
+                            <div className="pollutant-item"><span>O₃</span><strong>{airQualityData.pollutants.o3}</strong></div>
+                            <div className="pollutant-item"><span>NO₂</span><strong>{airQualityData.pollutants.no2}</strong></div>
+                            <div className="pollutant-item"><span>SO₂</span><strong>{airQualityData.pollutants.so2}</strong></div>
+                            <div className="pollutant-item"><span>CO</span><strong>{airQualityData.pollutants.co}</strong></div>
+                        </div>
+
+                        <div className="health-recommendation">
+                            <h5><span className="rec-icon">💡</span> 健康建議</h5>
+                            <p>{airQualityData.health_recommendation}</p>
+                        </div>
+
+                        <div className="data-source">
+                            資料來源：行政院環保署 - 空氣品質監測網 (透過 Gemini API 彙整)
+                        </div>
+                    </div>
+                )}
+            </div>
+        );
+
+      case '生活':
+        return (
+          <div className="life-content">
+            <h3>生活指數與旅遊氣象</h3>
+            <p className="life-subtitle">選擇一個分類，查看 {city} 的相關生活氣象建議。</p>
+            <div className="life-grid">
+              {lifeCategories.map(category => (
+                <button 
+                  key={category.name} 
+                  className="life-card"
+                  onClick={() => handleLifeCategoryClick(category.name)}
+                >
+                  <span className="life-card-icon">{category.icon}</span>
+                  <span className="life-card-name">{category.name}</span>
+                </button>
+              ))}
+            </div>
+            {isLifeModalOpen && (
+              <div className="modal-overlay" onClick={() => setIsLifeModalOpen(false)}>
+                <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+                  <div className="modal-header">
+                    <h4>{city} - {selectedLifeCategory}</h4>
+                    <button className="modal-close-btn" onClick={() => setIsLifeModalOpen(false)}>&times;</button>
+                  </div>
+                  <div className="modal-body">
+                    {lifeLoading && <div className="loading-spinner" aria-label="正在載入資料"></div>}
+                    {lifeError && <div className="error-message" role="alert">{lifeError}</div>}
+                    {lifeData && !lifeLoading && !lifeError && (
+                      <>
+                        <div className="life-data-content">{lifeData}</div>
+                        <div className="data-source">
+                          資料來源：交通部中央氣象署 (透過 Gemini API 彙整)
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+
+      case '地震':
+        return (
+          <div className="earthquake-content">
+            <h3>地震資訊與知識</h3>
+            <p className="earthquake-subtitle">選擇一個分類，查看由中央氣象署提供的相關地震資訊。</p>
+            <div className="earthquake-grid">
+              {earthquakeCategories.map(category => (
+                <button
+                  key={category.name}
+                  className="earthquake-card"
+                  onClick={() => handleEarthquakeCategoryClick(category.name)}
+                >
+                  <span className="earthquake-card-icon">{category.icon}</span>
+                  <span className="earthquake-card-name">{category.name}</span>
+                </button>
+              ))}
+            </div>
+            {isEarthquakeModalOpen && (
+              <div className="modal-overlay" onClick={() => setIsEarthquakeModalOpen(false)}>
+                <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+                  <div className="modal-header">
+                    <h4>{selectedEarthquakeCategory}</h4>
+                    <button className="modal-close-btn" onClick={() => setIsEarthquakeModalOpen(false)}>&times;</button>
+                  </div>
+                  <div className="modal-body">
+                    {earthquakeLoading && <div className="loading-spinner" aria-label="正在載入資料"></div>}
+                    {earthquakeError && <div className="error-message" role="alert">{earthquakeError}</div>}
+                    {earthquakeData && !earthquakeLoading && !earthquakeError && (
+                      <>
+                        <div className="earthquake-data-content">{earthquakeData}</div>
+                        <div className="data-source">
+                          資料來源：交通部中央氣象署 (透過 Gemini API 彙整)
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      
+      case '颱風動態':
+        return (
+          <div className="typhoon-content">
+            <h3>颱風動態</h3>
+
+            <div className="typhoon-map-container">
+              <iframe
+                width="100%"
+                height="100%"
+                src="https://embed.windy.com/embed.html?lat=23.9&lon=121.5&zoom=7&level=surface&overlay=wind&menu=&message=true&marker=&calendar=now&pressure=&type=map&location=coordinates&detail=&metricWind=km%2Fh&metricTemp=%C2%B0C&radarRange=-1"
+                frameBorder="0"
+                title="Windy.com Typhoon Map"
+                aria-label="Windy.com 颱風動態地圖"
+              ></iframe>
+            </div>
+
+            {typhoonData && typhoonData.length > 0 && (
+              <div className="active-typhoon-summary">
+                目前活躍颱風：{typhoonData.map(t => t.name).join('、')}
+              </div>
+            )}
+
+            {typhoonLoading && <div className="loading-spinner" aria-label="正在載入颱風動態"></div>}
+            {typhoonError && <div className="error-message" role="alert">{typhoonError}</div>}
+            
+            {typhoonData && (
+              <>
+                {typhoonData.length === 0 ? (
+                  <div className="no-typhoon-message">
+                    <span className="no-typhoon-icon">💨</span>
+                    <h4>目前尚無影響台灣的颱風</h4>
+                    <p>目前天氣穩定，無颱風活動跡象。我們會持續為您監測。</p>
+                  </div>
+                ) : (
+                  <div className="typhoon-list">
+                    {typhoonData.map((typhoon, index) => (
+                      <div key={index} className="typhoon-card">
+                        <div className="typhoon-header">
+                          <span className="typhoon-icon">🌀</span>
+                          <div className="typhoon-names">
+                            <h2>{typhoon.name}</h2>
+                            <span>{typhoon.englishName}</span>
+                          </div>
+                        </div>
+                        <div className="typhoon-stats">
+                          <div className="stat-item"><strong>中心位置:</strong> {typhoon.location}</div>
+                          <div className="stat-item"><strong>最大風速:</strong> {typhoon.maxWindSpeed_kph} km/h</div>
+                          <div className="stat-item"><strong>暴風半徑:</strong> {typhoon.stormRadius_km} km</div>
+                          <div className="stat-item"><strong>移動趨勢:</strong> {typhoon.movement}</div>
+                        </div>
+                        <div className="typhoon-summary">
+                          <h5>影響評估</h5>
+                          <p>{typhoon.summary}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                
+                {typhoonSources.length > 0 && (
+                  <div className="grounding-sources">
+                    <h5>資訊來源</h5>
+                    <ul>
+                      {typhoonSources.map((source, index) => (
+                        source.web && (
+                          <li key={index}>
+                            <a href={source.web.uri} target="_blank" rel="noopener noreferrer">
+                              {source.web.title || source.web.uri}
+                            </a>
+                          </li>
+                        )
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                <div className="data-source">資料來源：交通部中央氣象署, Windy.com & Google Search (透過 Gemini API 彙整)</div>
+              </>
+            )}
+          </div>
+        );
+
+      case '資料':
+        return (
+          <div className="data-content">
+              <h3>詳細氣象資料</h3>
+              <div className="search-box">
+                  <input
+                      type="text"
+                      value={city}
+                      onChange={(e) => setCity(e.target.value)}
+                      onKeyPress={(e) => e.key === 'Enter' && getDetailedData()}
+                      placeholder="例如：台北"
+                      aria-label="城市名稱"
+                  />
+                  <button onClick={getDetailedData} disabled={dataLoading}>
+                      {dataLoading ? '查詢中...' : '查詢資料'}
+                  </button>
+              </div>
+
+              {dataError && <div className="error-message" role="alert">{dataError}</div>}
+              {dataLoading && <div className="loading-spinner" aria-label="正在載入詳細資料"></div>}
+
+              {detailedData && (
+                  <div className="data-results">
+                      <h4>{detailedData.city} - 最近 7 天資料</h4>
+                      <table className="data-table">
+                          <thead>
+                              <tr>
+                                  <th>日期</th>
+                                  <th>每日雨量 (mm)</th>
+                                  <th>雨水 pH 值</th>
+                                  <th>紫外線指數</th>
+                              </tr>
+                          </thead>
+                          <tbody>
+                              {detailedData.dailyData.map(day => (
+                                  <tr key={day.date}>
+                                      <td>{day.date.split('-').slice(1).join('/')} ({getDayOfWeek(day.date)})</td>
+                                      <td>{day.rainfall_mm}</td>
+                                      <td>{day.rain_ph !== null ? day.rain_ph : 'N/A'}</td>
+                                      <td>{day.uv_index}</td>
+                                  </tr>
+                              ))}
+                          </tbody>
+                      </table>
+                       <div className="data-source">
+                          資料來源：交通部中央氣象署 (透過 Gemini API 彙整)
+                      </div>
+                  </div>
+              )}
+          </div>
+        );
+
+      case '知識與天文':
+        return (
+            <div className="astro-content">
+                <h3>天文知識</h3>
+                <div className="fact-card" aria-live="polite">
+                    {astroLoading && <div className="loading-spinner" aria-label="正在載入天文知識"></div>}
+                    {astroError && <div className="error-message" role="alert">{astroError}</div>}
+                    {astroFact && !astroLoading && !astroError && <p>{astroFact}</p>}
+                </div>
+                <button className="astro-button" onClick={getAstroFact} disabled={astroLoading}>
+                    {astroLoading ? '產生中...' : '產生新的天文知識'}
+                </button>
+                <div className="data-source">
+                    資料來源：交通部中央氣象署 (透過 Gemini API 彙整)
+                </div>
+            </div>
+        );
+
+      default:
+        return (
+          <div className="placeholder-content">
+              <h3>{activeTab}</h3>
+              <p>此功能將整合中央氣象署的公開資料，敬請期待！</p>
+          </div>
+        );
+    }
+  };
+
+  return (
+    <>
+      <div className="container">
+        <header>
+          <h1>AI 氣象資訊站</h1>
+          <p>所有天氣資料均來自中央氣象署，由 Gemini API 整理呈現</p>
+        </header>
+        <nav className="main-nav">
+            {navItems.map(item => (
+              <button
+                key={item}
+                className={`nav-item ${activeTab === item ? 'active' : ''}`}
+                onClick={() => setActiveTab(item)}
+              >
+                {item}
+              </button>
+            ))}
+        </nav>
+        <main>
+          {renderContent()}
+        </main>
+      </div>
+
+      <div className="chat-widget">
+        <div className={`chat-window ${isChatOpen ? 'open' : ''}`}>
+          <div className="chat-header">
+            <h3>AI 小幫手</h3>
+            <button className="chat-close-btn" onClick={() => setIsChatOpen(false)}>&times;</button>
+          </div>
+          <div className="chat-messages" ref={chatMessagesRef}>
+            {chatHistory.map((msg, index) => (
+              <div key={index} className={`message-bubble-wrapper ${msg.role}-wrapper`}>
+                <div className={`message-bubble ${msg.role}-message`}>{msg.text}</div>
+              </div>
+            ))}
+            {isChatLoading && (
+              <div className="message-bubble-wrapper model-wrapper">
+                <div className="message-bubble model-message typing-indicator">
+                  <span></span><span></span><span></span>
+                </div>
+              </div>
+            )}
+          </div>
+          <form className="chat-input-form" onSubmit={handleSendMessage}>
+            <input
+              type="text"
+              className="chat-input"
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              placeholder="輸入您的問題..."
+              disabled={isChatLoading}
+              aria-label="聊天輸入框"
+            />
+            <button type="submit" className="chat-send-btn" disabled={isChatLoading || !chatInput.trim()} aria-label="傳送訊息">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+            </button>
+          </form>
+        </div>
+        <button className="chat-fab" onClick={() => setIsChatOpen(true)} aria-label="開啟 AI 聊天">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor"><path d="M20 2H4c-1.1 0-1.99.9-1.99 2L2 22l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM9 11H7V9h2v2zm4 0h-2V9h2v2zm4 0h-2V9h2v2z"/></svg>
+        </button>
+      </div>
+    </>
+  );
+};
+
+const root = ReactDOM.createRoot(document.getElementById('root')!);
+root.render(<App />);
